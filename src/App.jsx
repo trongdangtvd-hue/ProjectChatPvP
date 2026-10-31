@@ -1,899 +1,826 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
-  getAuth, 
-  signInAnonymously, 
-  signInWithCustomToken, 
-  onAuthStateChanged 
+  getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged 
 } from 'firebase/auth';
 import { 
-  getFirestore, 
-  collection, 
-  doc, 
-  setDoc, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  onSnapshot 
+  getFirestore, collection, addDoc, onSnapshot, doc, setDoc 
 } from 'firebase/firestore';
-import { 
-  MessageSquare, 
-  Send, 
-  Code, 
-  Smile, 
-  Volume2, 
-  VolumeX, 
-  Trash2, 
-  Copy, 
-  Check, 
-  Sparkles, 
-  Terminal, 
-  Clock, 
-  CheckCheck,
-  RefreshCw,
-  Hash,
-  Zap,
-  Monitor,
-  Globe,
-  Play,
-  Folder,
-  FileCode,
-  ChevronRight,
-  Minus,
-  Maximize2,
-  Eye,
-  EyeOff,
-  Move,
-  Bell,
-  Smartphone,
-  Download,
-  X,
-  Layers,
-  Search,
-  BookOpen,
-  ExternalLink,
-  Cpu,
-  Pin,
-  PinOff
-} from 'lucide-react';
 
-// ==========================================
-// 1. KHỞI TẠO FIREBASE VỚI CẤU HÌNH CỦA BẠN
-// ==========================================
-const firebaseConfig = {
-  apiKey: "AIzaSyB5xj1tKoD2tUCILXBWWUw2S6euhyXwcSM",
-  authDomain: "projectchatpvp.firebaseapp.com",
-  projectId: "projectchatpvp",
-  storageBucket: "projectchatpvp.firebasestorage.app",
-  messagingSenderId: "90209101889",
-  appId: "1:90209101889:web:e93eea4ce166709c0e7ec0",
-  measurementId: "G-4PNSD0TBLQ"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = 'vn-desktop-chat-p2p';
-
-// ==========================================
-// 2. TIỆN ÍCH ÂM THANH (WEB AUDIO API)
-// ==========================================
-const playPopSound = (type = 'incoming') => {
-  try {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-
-    const now = ctx.currentTime;
-    if (type === 'incoming') {
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(580, now);
-      osc.frequency.exponentialRampToValueAtTime(920, now + 0.11);
-      gain.gain.setValueAtTime(0.18, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
-      osc.start(now);
-      osc.stop(now + 0.16);
-    } else {
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(420, now);
-      osc.frequency.exponentialRampToValueAtTime(640, now + 0.06);
-      gain.gain.setValueAtTime(0.08, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-      osc.start(now);
-      osc.stop(now + 0.08);
-    }
-  } catch (e) {
-    // Bỏ qua nếu trình duyệt chặn tự động phát âm thanh
+// --- KHỞI TẠO FIREBASE REALTIME ---
+let app = null;
+let auth = null;
+let db = null;
+try {
+  const firebaseConfig = typeof __firebase_config !== 'undefined' && __firebase_config
+    ? JSON.parse(__firebase_config)
+    : null;
+  if (firebaseConfig && Object.keys(firebaseConfig).length > 0) {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
   }
-};
+} catch (e) {
+  console.warn('Firebase init fallback:', e);
+}
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-// ==========================================
-// 3. DỮ LIỆU MẪU (TIN NHẮN GIẢ LẬP & CODE)
-// ==========================================
-const QUICK_EMOJIS = ['😄', '😂', '❤️', '🔥', '👍', '🎉', '🚀', '💻', '☕', '🤔', '👀', '✨'];
-const REACTION_EMOJIS = ['❤️', '👍', '😂', '🔥'];
-
-const SIMULATED_FRIEND_MESSAGES = [
-  { text: 'Ê Đăng, ông đang code phần WebSocket ở file nào thế? Tôi hỏi nhanh chút!', isCode: false },
-  { text: 'Tôi vừa viết xong hàm kết nối này, ông xem thử ổn chưa nhé:', isCode: false },
-  { 
-    text: `const socket = new WebSocket('wss://chat.dangdev.vn/ws');\nsocket.onmessage = (e) => {\n  console.log('Tin nhắn mới:', JSON.parse(e.data));\n};`, 
-    isCode: true 
-  },
-  { text: 'Nhìn thanh chat nhỏ ở góc màn hình tiện thật, vừa gõ VS Code vừa trả lời không cần Alt + Tab luôn 🔥', isCode: false },
-  { text: 'Tối nay 8h nhớ vào phòng #686868 test bản build .exe nhé!', isCode: false }
+const CHANNELS = [
+  { id: 'TEAM', label: 'Đội', color: '#38bdf8' },
+  { id: 'ALL', label: 'Tất cả', color: '#f59e0b' },
+  { id: 'BROADCAST', label: 'Phát sóng', color: '#c8aa6e' },
 ];
 
-const INITIAL_VSCODE_FILES = {
-  'ChatServer.java': `package com.dang.minichat.config;
+const QUICK_ROOMS = ['SANH-CHUNG', 'TEAM-1', 'TEAM-2', 'SOLO-PVP'];
+const EMOJIS = ['😀', '😂', '😎', '😭', '😡', '👍', '❤️', '🔥', '🎉', '👀', '🛡️', '⚔️'];
 
-import org.springframework.context.annotation.Configuration;
-import org.springframework.web.socket.config.annotation.*;
-
-@Configuration
-@EnableWebSocketMessageBroker
-public class ChatServer implements WebSocketMessageBrokerConfigurer {
-
-    @Override
-    public void configureMessageBroker(MessageBrokerRegistry config) {
-        // Kênh truyền tin nhắn thời gian thực cho 2 máy
-        config.enableSimpleBroker("/topic/room");
-        config.setApplicationDestinationPrefixes("/app");
-    }
-
-    public static void main(String[] args) {
-        System.out.println("🚀 Server WebSocket đã khởi chạy tại cổng 8080!");
-        System.out.println("💡 Bạn có thể vừa sửa code tại đây vừa nhìn thanh chat ở góc phải!");
-    }
-}`,
-  'electron-main.cjs': `const { app, BrowserWindow, screen, globalShortcut } = require('electron');
-
-function createOverlayWindow() {
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-  const win = new BrowserWindow({
-    width: 330,
-    height: 440,
-    x: width - 350,
-    y: height - 470,
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true // Luôn nổi trên mọi ứng dụng khác!
-  });
-
-  win.setAlwaysOnTop(true, 'screen-saver');
-  win.loadURL('http://localhost:5173');
-}
-
-app.whenReady().then(createOverlayWindow);`,
-  'notes.md': `# Nhật ký phát triển MiniChat Overlay
-- [x] Thiết kế giao diện nổi góc màn hình (330x440)
-- [x] Bật chế độ Ghost Mode (Tự làm mờ khi chuột rời đi)
-- [x] Hỗ trợ phím tắt Alt + C để ẩn/hiện tức thì
-- [x] Gửi đoạn code từ VS Code sang thẳng khung chat`
-};
-
-const ELECTRON_EXPORT_CODE = `// FILE 1: electron-main.cjs (Đặt ở thư mục gốc của project)
-const { app, BrowserWindow, screen, ipcMain, globalShortcut } = require('electron');
-const path = require('path');
-
-let mainWindow;
-
-function createWindow() {
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-
-  mainWindow = new BrowserWindow({
-    width: 330,
-    height: 440,
-    x: screenWidth - 350,
-    y: screenHeight - 470,
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true,
-    resizable: true,
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-    },
-  });
-
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
-  mainWindow.setVisibleOnAllWorkspaces(true);
-
-  const startUrl = process.env.ELECTRON_START_URL || \`file://\${path.join(__dirname, 'dist/index.html')}\`;
-  mainWindow.loadURL(startUrl);
-
-  globalShortcut.register('Alt+C', () => {
-    if (mainWindow.isVisible()) mainWindow.hide();
-    else { mainWindow.show(); mainWindow.focus(); }
-  });
-}
-
-app.whenReady().then(createWindow);`;
-
-// ==========================================
-// 4. COMPONENT CHÍNH: MÔ PHỎNG DESKTOP & OVERLAY CHAT
-// ==========================================
 export default function App() {
   const [user, setUser] = useState(null);
-  const [roomCode, setRoomCode] = useState('686868');
-  const [roomInput, setRoomInput] = useState('686868');
+  const [nickname, setNickname] = useState('Vệ Quân ' + Math.floor(10 + Math.random() * 89));
+  const [roomId, setRoomId] = useState('SANH-CHUNG');
+  const [channelIdx, setChannelIdx] = useState(0);
 
-  const [myName, setMyName] = useState('Đăng');
-  const [friendName, setFriendName] = useState('Minh (Bạn cùng phòng)');
-
-  const [activeDesktopApp, setActiveDesktopApp] = useState('vscode');
-  const [activeFile, setActiveFile] = useState('ChatServer.java');
-  const [codeFiles, setCodeFiles] = useState(INITIAL_VSCODE_FILES);
-  const [terminalLogs, setTerminalLogs] = useState([
-    '[INFO] Khởi tạo môi trường VS Code Simulator thành công.',
-    '[TIP] Giữ chuột vào thanh tiêu đề khung chat để kéo thả tới bất kỳ đâu trên màn hình!'
+  const [cloudMessages, setCloudMessages] = useState([]);
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  const [localSystemMsgs, setLocalSystemMsgs] = useState([
+    {
+      id: 'init-broadcast',
+      isSystem: true,
+      channel: 'BROADCAST',
+      text: 'Chào mừng! Bấm vào thanh tiêu đề hoặc nút ⚙️ bên trái để đổi tên và phòng chat.',
+      timeLabel: '00:26',
+      timestamp: 1
+    }
   ]);
-  const [browserTab, setBrowserTab] = useState('guide');
 
-  const [widgetMode, setWidgetMode] = useState('expanded');
-  const [autoHideEnabled, setAutoHideEnabled] = useState(false);
-  const [isPinned, setIsPinned] = useState(false);
-  const [ghostMode, setGhostMode] = useState(false);
-  const [isHoveringWidget, setIsHoveringWidget] = useState(false);
-  const [isInputFocused, setIsInputFocused] = useState(false);
-  const [autoPopupActive, setAutoPopupActive] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [inputText, setInputText] = useState('');
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showChannelMenu, setShowChannelMenu] = useState(false);
+
+  // Chế độ hiển thị: 'FULL' (đầy đủ), 'BAR' (ẩn khung lịch sử, chỉ hiện thanh nhập), 'ICON' (chỉ hiện nút mặt cười)
+  const [viewMode, setViewMode] = useState('FULL');
   const [unreadCount, setUnreadCount] = useState(0);
 
-  const [widgetPos, setWidgetPos] = useState({ x: null, y: null });
-  const [isDragging, setIsDragging] = useState(false);
-  const dragOffsetRef = useRef({ x: 0, y: 0 });
-  const hasMovedWhileDraggingRef = useRef(false);
-  const desktopContainerRef = useRef(null);
+  // State chỉnh sửa trực tiếp trong bảng tích hợp
+  const [tempName, setTempName] = useState('');
+  const [tempRoom, setTempRoom] = useState('');
+  const [editingInlineName, setEditingInlineName] = useState(false);
+  const [copiedRoom, setCopiedRoom] = useState(false);
 
-  const [allMessages, setAllMessages] = useState([]);
-  const [inputText, setInputText] = useState('');
-  const [isCodeMode, setIsCodeMode] = useState(false);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [copiedId, setCopiedId] = useState(null);
-  const [friendTyping, setFriendTyping] = useState(false);
+  // Vị trí và kích thước của riêng khung chat
+  const [pos, setPos] = useState({ x: 40, y: 120 });
+  const [boxSize, setBoxSize] = useState({ width: 460, height: 170 });
+  const [dragging, setDragging] = useState(false);
+  const [resizing, setResizing] = useState(false);
 
-  const [showSimulatorDrawer, setShowSimulatorDrawer] = useState(true);
-  const [showExportModal, setShowExportModal] = useState(false);
-  const [clockText, setClockText] = useState('');
-
-  const messagesEndRef = useRef(null);
+  const dragRef = useRef({ startX: 0, startY: 0, offsetX: 0, offsetY: 0, moved: false });
+  const resizeRef = useRef({ startX: 0, startY: 0, startW: 460, startH: 170 });
+  const endRef = useRef(null);
+  const inputRef = useRef(null);
   const prevMsgCountRef = useRef(0);
-  const simIndexRef = useRef(0);
-  const hideTimerRef = useRef(null);
-  const popupTimerRef = useRef(null);
-  const broadcastRef = useRef(null);
 
+  // Đồng bộ giá trị form khi mở bảng cài đặt
   useEffect(() => {
-    const updateClock = () => {
-      const now = new Date();
-      setClockText(now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }));
-    };
-    updateClock();
-    const timer = setInterval(updateClock, 15000);
-    return () => clearInterval(timer);
-  }, []);
+    setTempName(nickname);
+    setTempRoom(roomId);
+  }, [nickname, roomId, showSettings]);
 
+  // 1. Xác thực Firebase
   useEffect(() => {
-    const initDefaultPosition = () => {
-      if (!desktopContainerRef.current) return;
-      const rect = desktopContainerRef.current.getBoundingClientRect();
-      setWidgetPos((prev) => {
-        if (prev.x !== null && prev.y !== null) return prev;
-        return {
-          x: Math.max(16, rect.width - 330 - 20),
-          y: Math.max(16, rect.height - 440 - 58)
-        };
-      });
-    };
-    initDefaultPosition();
-    window.addEventListener('resize', initDefaultPosition);
-    return () => window.removeEventListener('resize', initDefaultPosition);
-  }, []);
-
-  useEffect(() => {
-    if (!autoHideEnabled || isPinned) return;
-
-    if (isHoveringWidget || isDragging || isInputFocused || autoPopupActive) {
-      if (hideTimerRef.current) {
-        clearTimeout(hideTimerRef.current);
-        hideTimerRef.current = null;
-      }
-      if (isHoveringWidget && widgetMode !== 'expanded') {
-        setWidgetMode('expanded');
-      }
-      return;
-    }
-
-    hideTimerRef.current = setTimeout(() => {
-      setWidgetMode('bar');
-      setShowEmojiPicker(false);
-    }, 650);
-
-    return () => {
-      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    };
-  }, [
-    autoHideEnabled,
-    isPinned,
-    isHoveringWidget,
-    isDragging,
-    isInputFocused,
-    autoPopupActive,
-    widgetMode
-  ]);
-
-  const triggerIncomingPopup = () => {
-    setWidgetMode('expanded');
-    setAutoPopupActive(true);
-    if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
-    popupTimerRef.current = setTimeout(() => {
-      setAutoPopupActive(false);
-    }, 4500);
-  };
-
-  useEffect(() => {
-    if (typeof BroadcastChannel === 'undefined') return;
-    const channel = new BroadcastChannel('minichat_p2p_sync');
-    broadcastRef.current = channel;
-    channel.onmessage = (event) => {
-      if (event.data && event.data.type === 'NEW_MESSAGE' && event.data.roomCode === roomCode) {
-        triggerIncomingPopup();
-      }
-    };
-    return () => channel.close();
-  }, [roomCode]);
-
-  useEffect(() => {
-    const handleGlobalKeyDown = (e) => {
-      if (e.altKey && (e.key === 'c' || e.key === 'C')) {
-        e.preventDefault();
-        setWidgetMode((prev) => (prev === 'expanded' ? 'bar' : 'expanded'));
-      }
-    };
-    window.addEventListener('keydown', handleGlobalKeyDown);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, []);
-
-  useEffect(() => {
+    if (!auth) return;
     const initAuth = async () => {
       try {
-        await signInAnonymously(auth);
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
       } catch (err) {
-        console.error('Lỗi đăng nhập Firebase:', err);
+        console.error('Auth error:', err);
       }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-    });
-    return () => unsubscribe();
+    const unsub = onAuthStateChanged(auth, (u) => setUser(u));
+    return () => unsub();
   }, []);
 
+  // 2. Lắng nghe tin nhắn & trạng thái người dùng trực tuyến theo phòng
   useEffect(() => {
-    if (!user) return;
-    const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', 'chat_messages');
+    if (!user || !db || !roomId) return;
+    const cleanRoom = roomId.trim().toUpperCase();
+    const msgColRef = collection(db, 'artifacts', appId, 'public', 'data', `tft_hud_chat_${cleanRoom}`);
+    const presenceColRef = collection(db, 'artifacts', appId, 'public', 'data', `tft_hud_presence_${cleanRoom}`);
 
-    const unsubMessages = onSnapshot(
-      messagesRef,
-      (snapshot) => {
+    const unsubMsgs = onSnapshot(
+      msgColRef,
+      (snap) => {
         const list = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          if (data.roomCode === roomCode) {
-            list.push({ id: docSnap.id, ...data });
-          }
-        });
-        list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-        setAllMessages(list);
-
-        if (list.length > prevMsgCountRef.current && prevMsgCountRef.current > 0) {
-          const newest = list[list.length - 1];
-          const myId = `${user.uid}_A`;
-          if (newest && newest.senderId !== myId) {
-            if (soundEnabled) playPopSound('incoming');
-            triggerIncomingPopup();
-            if (!isHoveringWidget) {
-              setUnreadCount((c) => c + 1);
-            }
-          }
-        }
-        prevMsgCountRef.current = list.length;
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        list.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        setCloudMessages(list.slice(-80));
       },
-      (err) => console.error('Lỗi lắng nghe tin nhắn:', err)
+      (err) => console.error('Sync error:', err)
     );
 
-    return () => unsubMessages();
-  }, [user, roomCode, soundEnabled, isHoveringWidget]);
+    const updatePresence = async () => {
+      try {
+        const userDoc = doc(db, 'artifacts', appId, 'public', 'data', `tft_hud_presence_${cleanRoom}`, user.uid);
+        await setDoc(userDoc, {
+          uid: user.uid,
+          name: nickname,
+          lastSeen: Date.now()
+        }, { merge: true });
+      } catch (e) {
+        console.warn('Presence update warning:', e);
+      }
+    };
 
+    updatePresence();
+    const heartbeat = setInterval(updatePresence, 20000);
+
+    const unsubPresence = onSnapshot(
+      presenceColRef,
+      (snap) => {
+        const now = Date.now();
+        const active = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          if (now - (data.lastSeen || 0) < 60000) {
+            active.push(data);
+          }
+        });
+        setOnlineUsers(active);
+      },
+      (err) => console.warn('Presence error:', err)
+    );
+
+    return () => {
+      unsubMsgs();
+      unsubPresence();
+      clearInterval(heartbeat);
+    };
+  }, [user, roomId, nickname]);
+
+  const allMessages = [...localSystemMsgs, ...cloudMessages].sort(
+    (a, b) => (a.timestamp || 0) - (b.timestamp || 0)
+  );
+
+  // Đếm tin nhắn chưa đọc khi đang thu nhỏ và tự cuộn xuống cuối
   useEffect(() => {
-    if (widgetMode === 'expanded') {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      if (isHoveringWidget) {
-        setUnreadCount(0);
+    if (allMessages.length > prevMsgCountRef.current) {
+      if (viewMode !== 'FULL') {
+        setUnreadCount((c) => c + (allMessages.length - prevMsgCountRef.current));
+      } else {
+        endRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
     }
-  }, [allMessages, widgetMode, friendTyping, isHoveringWidget]);
+    prevMsgCountRef.current = allMessages.length;
+  }, [allMessages.length, viewMode]);
 
   useEffect(() => {
-    const handleMouseMove = (e) => {
-      if (!isDragging || !desktopContainerRef.current) return;
-      hasMovedWhileDraggingRef.current = true;
-      const rect = desktopContainerRef.current.getBoundingClientRect();
-      const boxWidth = widgetMode === 'expanded' ? 330 : 260;
-      const boxHeight = widgetMode === 'expanded' ? 440 : 52;
+    if (viewMode === 'FULL') {
+      setUnreadCount(0);
+      endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [viewMode]);
 
-      const newX = Math.max(8, Math.min(e.clientX - rect.left - dragOffsetRef.current.x, rect.width - boxWidth - 8));
-      const newY = Math.max(8, Math.min(e.clientY - rect.top - dragOffsetRef.current.y, rect.height - boxHeight - 48));
-      setWidgetPos({ x: newX, y: newY });
+  // 3. Xử lý kéo di chuyển và kéo giãn khung chat
+  useEffect(() => {
+    const handleMove = (e) => {
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+      if (dragging) {
+        if (
+          Math.abs(clientX - dragRef.current.startX) > 3 ||
+          Math.abs(clientY - dragRef.current.startY) > 3
+        ) {
+          dragRef.current.moved = true;
+        }
+        const nextX = Math.max(8, Math.min(window.innerWidth - 80, clientX - dragRef.current.offsetX));
+        const nextY = Math.max(8, Math.min(window.innerHeight - 48, clientY - dragRef.current.offsetY));
+        setPos({ x: nextX, y: nextY });
+      }
+
+      if (resizing) {
+        const dw = clientX - resizeRef.current.startX;
+        const dh = clientY - resizeRef.current.startY;
+        setBoxSize({
+          width: Math.max(310, Math.min(window.innerWidth - pos.x - 48, resizeRef.current.startW + dw)),
+          height: Math.max(110, Math.min(window.innerHeight - pos.y - 60, resizeRef.current.startH + dh)),
+        });
+      }
     };
 
-    const handleMouseUp = () => {
-      setIsDragging(false);
+    const handleUp = () => {
+      setDragging(false);
+      setResizing(false);
     };
 
-    if (isDragging) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
+    if (dragging || resizing) {
+      window.addEventListener('mousemove', handleMove);
+      window.addEventListener('mouseup', handleUp);
+      window.addEventListener('touchmove', handleMove, { passive: false });
+      window.addEventListener('touchend', handleUp);
     }
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+      window.removeEventListener('touchmove', handleMove);
+      window.removeEventListener('touchend', handleUp);
     };
-  }, [isDragging, widgetMode]);
+  }, [dragging, resizing, pos.x, pos.y]);
 
   const startDrag = (e) => {
-    if (e.button !== 0) return;
-    if (!desktopContainerRef.current) return;
-    const widgetEl = e.currentTarget.closest('.draggable-chat-widget');
-    if (!widgetEl) return;
-    const widgetRect = widgetEl.getBoundingClientRect();
-    hasMovedWhileDraggingRef.current = false;
-    dragOffsetRef.current = {
-      x: e.clientX - widgetRect.left,
-      y: e.clientY - widgetRect.top
+    if (e.target.closest('input') || e.target.closest('[data-nodrag="true"]')) return;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    dragRef.current = {
+      startX: clientX,
+      startY: clientY,
+      offsetX: clientX - pos.x,
+      offsetY: clientY - pos.y,
+      moved: false,
     };
-    setIsDragging(true);
+    setDragging(true);
   };
 
-  const getSafeExpandedStyle = () => {
-    if (widgetPos.x === null || widgetPos.y === null || !desktopContainerRef.current) {
-      return { right: '20px', bottom: '56px' };
-    }
-    const rect = desktopContainerRef.current.getBoundingClientRect();
-    const safeX = Math.max(8, Math.min(widgetPos.x, rect.width - 338));
-    const safeY = Math.max(8, Math.min(widgetPos.y, rect.height - 488));
-    return { left: `${safeX}px`, top: `${safeY}px` };
+  const startResize = (e) => {
+    e.stopPropagation();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    resizeRef.current = {
+      startX: clientX,
+      startY: clientY,
+      startW: boxSize.width,
+      startH: boxSize.height,
+    };
+    setResizing(true);
   };
 
-  const sendMessageToRoom = async ({ text, isCode, senderRole = 'me' }) => {
-    if (!user || !text.trim()) return;
-    const isMe = senderRole === 'me';
-    const senderId = isMe ? `${user.uid}_A` : `${user.uid}_B`;
-    const senderName = isMe ? myName : friendName;
-
-    try {
-      if (isMe && soundEnabled) playPopSound('outgoing');
-      const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', 'chat_messages');
-      await addDoc(messagesRef, {
-        text,
-        isCode: Boolean(isCode),
-        senderId,
-        senderName,
-        roomCode,
-        createdAt: Date.now(),
-        seenBy: [senderId],
-        reactions: {}
-      });
-      if (!isMe && broadcastRef.current) {
-        broadcastRef.current.postMessage({ type: 'NEW_MESSAGE', roomCode });
-      }
-    } catch (err) {
-      console.error('Lỗi gửi tin nhắn:', err);
-    }
+  const formatTime = (ts, fallback) => {
+    if (fallback) return fallback;
+    if (!ts) return '00:00';
+    const d = new Date(ts);
+    return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false });
   };
 
-  const handleMySubmit = (e) => {
-    if (e) e.preventDefault();
-    if (!inputText.trim()) return;
-    sendMessageToRoom({ text: inputText, isCode: isCodeMode, senderRole: 'me' });
-    setInputText('');
-    setIsCodeMode(false);
-    setShowEmojiPicker(false);
-  };
-
-  const triggerSimulatedFriendMessage = (customMsg = null) => {
-    if (friendTyping) return;
-    setFriendTyping(true);
-    triggerIncomingPopup();
-
-    setTimeout(async () => {
-      setFriendTyping(false);
-      if (customMsg) {
-        await sendMessageToRoom({ text: customMsg, isCode: false, senderRole: 'friend' });
-      } else {
-        const sample = SIMULATED_FRIEND_MESSAGES[simIndexRef.current % SIMULATED_FRIEND_MESSAGES.length];
-        simIndexRef.current += 1;
-        await sendMessageToRoom({ text: sample.text, isCode: sample.isCode, senderRole: 'friend' });
-      }
-    }, 900);
-  };
-
-  const handleToggleReaction = async (messageId, emoji) => {
-    if (!user) return;
-    const myId = `${user.uid}_A`;
-    try {
-      const target = allMessages.find((m) => m.id === messageId);
-      if (!target) return;
-      const reactions = { ...(target.reactions || {}) };
-      const list = reactions[emoji] || [];
-      if (list.includes(myId)) {
-        reactions[emoji] = list.filter((id) => id !== myId);
-      } else {
-        reactions[emoji] = [...list, myId];
-      }
-      const msgRef = doc(db, 'artifacts', appId, 'public', 'data', 'chat_messages', messageId);
-      await updateDoc(msgRef, { reactions });
-    } catch (err) {
-      console.error('Lỗi thả cảm xúc:', err);
-    }
-  };
-
-  const handleClearMessages = async () => {
-    if (!user) return;
-    try {
-      for (const msg of allMessages) {
-        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'chat_messages', msg.id));
-      }
-    } catch (err) {
-      console.error('Lỗi xóa lịch sử:', err);
-    }
-  };
-
-  const runSimulatedCode = () => {
-    const time = new Date().toLocaleTimeString('vi-VN');
-    setTerminalLogs((prev) => [
+  const addSystemMessage = (text) => {
+    setLocalSystemMsgs((prev) => [
       ...prev,
-      `[${time}] $ javac ${activeFile} && java ChatServer`,
-      `[${time}] 🚀 Server WebSocket đã khởi chạy tại cổng 8080! (Phòng #${roomCode} đang hoạt động)`
+      {
+        id: 'sys-' + Date.now() + '-' + Math.random(),
+        isSystem: true,
+        channel: 'BROADCAST',
+        text,
+        timestamp: Date.now(),
+      },
     ]);
   };
 
-  const shareCurrentCodeToChat = () => {
-    const snippet = codeFiles[activeFile] || '';
-    sendMessageToRoom({
-      text: `// File: ${activeFile}\n` + snippet.slice(0, 320) + (snippet.length > 320 ? '\n// ...' : ''),
-      isCode: true,
-      senderRole: 'me'
+  const handleSaveProfileAndRoom = (e) => {
+    if (e) e.preventDefault();
+    const cleanName = tempName.trim().slice(0, 22);
+    const cleanRoom = tempRoom.trim().toUpperCase().replace(/[^A-Z0-9-_]/g, '');
+
+    if (cleanName && cleanName !== nickname) {
+      setNickname(cleanName);
+      addSystemMessage(`Đã đổi tên hiển thị thành: ${cleanName}`);
+    }
+    if (cleanRoom && cleanRoom !== roomId) {
+      setRoomId(cleanRoom);
+      addSystemMessage(`Đã chuyển sang phòng chat: ${cleanRoom}`);
+    }
+    setEditingInlineName(false);
+    setShowSettings(false);
+  };
+
+  const handleCopyRoom = () => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(roomId);
+      setCopiedRoom(true);
+      setTimeout(() => setCopiedRoom(false), 1800);
+    }
+  };
+
+  const handleClearChat = () => {
+    setLocalSystemMsgs([
+      {
+        id: 'sys-clear-' + Date.now(),
+        isSystem: true,
+        channel: 'BROADCAST',
+        text: 'Đã làm sạch lịch sử khung chat.',
+        timestamp: Date.now(),
+      }
+    ]);
+    setCloudMessages([]);
+  };
+
+  const toggleViewMode = () => {
+    setViewMode((prev) => {
+      if (prev === 'FULL') return 'BAR';
+      if (prev === 'BAR') return 'ICON';
+      return 'FULL';
     });
-    triggerIncomingPopup();
   };
 
-  const handleCopy = (id, content) => {
-    navigator.clipboard.writeText(content);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 1800);
+  // 4. Gửi tin nhắn trực tiếp
+  const handleSend = async (e, quickText = null) => {
+    if (e) e.preventDefault();
+    const text = (quickText !== null ? quickText : inputText).trim();
+    if (!text) return;
+
+    if (quickText === null) setInputText('');
+    setShowEmoji(false);
+
+    const activeChan = CHANNELS[channelIdx];
+
+    if (user && db) {
+      try {
+        const cleanRoom = roomId.trim().toUpperCase();
+        const colRef = collection(db, 'artifacts', appId, 'public', 'data', `tft_hud_chat_${cleanRoom}`);
+        await addDoc(colRef, {
+          text,
+          channel: activeChan.id,
+          senderId: user.uid,
+          senderName: nickname,
+          timestamp: Date.now(),
+        });
+      } catch (err) {
+        console.error('Send error:', err);
+      }
+    } else {
+      setLocalSystemMsgs((prev) => [
+        ...prev,
+        {
+          id: 'local-' + Date.now(),
+          channel: activeChan.id,
+          senderName: nickname,
+          text,
+          timestamp: Date.now(),
+        },
+      ]);
+    }
   };
 
-  const myUid = user ? `${user.uid}_A` : 'local_A';
-  const lastMessage = allMessages.length > 0 ? allMessages[allMessages.length - 1] : null;
+  const currentChan = CHANNELS[channelIdx];
 
   return (
     <div
-      ref={desktopContainerRef}
-      className="relative h-screen w-screen overflow-hidden bg-[#070b14] text-slate-100 font-sans"
+      style={{
+        left: `${pos.x}px`,
+        top: `${pos.y}px`,
+      }}
+      className="fixed z-50 flex items-start gap-[5px] select-none font-sans"
     >
-              {/* KHUNG CHAT NỔI (330x440px) */}
-        {widgetMode === 'expanded' && (
+      {/* CỘT TRÁI: NÚT MẶT CƯỜI + CÁC NÚT CHỨC NĂNG TÍCH HỢP VIỀN VÀNG ĐỒNG */}
+      <div className="relative flex flex-col items-center gap-[4px]">
+        {/* 1. Nút Mặt Cười (Kéo di chuyển / Bấm mở Emoji / Mở lại khi đang thu nhỏ) */}
+        <button
+          type="button"
+          onMouseDown={startDrag}
+          onTouchStart={startDrag}
+          onClick={() => {
+            if (!dragRef.current.moved) {
+              if (viewMode === 'ICON') {
+                setViewMode('FULL');
+              } else {
+                setShowEmoji((prev) => !prev);
+                setShowSettings(false);
+              }
+            }
+          }}
+          title={
+            viewMode === 'ICON'
+              ? 'Nhấn để mở rộng lại khung chat • Kéo để di chuyển'
+              : 'Kéo để di chuyển khung chat • Nhấn để chọn biểu cảm'
+          }
+          className="relative w-[34px] h-[34px] bg-[#0a121c]/90 hover:bg-[#122032] border border-[#785a28] flex items-center justify-center cursor-move shadow-[inset_0_0_4px_rgba(200,170,110,0.25)] transition"
+        >
+          <svg viewBox="0 0 24 24" className="w-[20px] h-[20px] fill-[#c8aa6e]">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm3.5 6c.83 0 1.5.67 1.5 1.5S16.33 11 15.5 11 14 10.33 14 9.5 14.67 8 15.5 8zm-7 0c.83 0 1.5.67 1.5 1.5S9.33 11 8.5 11 7 10.33 7 9.5 7.67 8 8.5 8zm3.5 9.5c-2.33 0-4.31-1.46-5.11-3.5h10.22c-.8 2.04-2.78 3.5-5.11 3.5z" />
+          </svg>
+          {unreadCount > 0 && viewMode !== 'FULL' && (
+            <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 rounded-full bg-[#e11d48] border border-[#c8aa6e] text-[10px] font-bold text-white flex items-center justify-center">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
+        </button>
+
+        {/* Các nút công cụ nhanh bên dưới nút mặt cười (ẩn khi ở chế độ chỉ hiện Icon) */}
+        {viewMode !== 'ICON' && (
+          <>
+            {/* 2. Nút Cài Đặt Tên & Phòng Chat */}
+            <button
+              type="button"
+              data-nodrag="true"
+              onClick={() => {
+                setShowSettings((prev) => !prev);
+                setShowEmoji(false);
+              }}
+              title="Đổi tên hiển thị, chuyển phòng & xem bạn bè trong phòng"
+              className={`w-[34px] h-[28px] border border-[#785a28] flex items-center justify-center transition ${
+                showSettings ? 'bg-[#785a28]/40 text-[#f0e6d2]' : 'bg-[#0a121c]/85 hover:bg-[#122032] text-[#c8aa6e]'
+              }`}
+            >
+              <svg viewBox="0 0 24 24" className="w-[15px] h-[15px] fill-current">
+                <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+              </svg>
+            </button>
+
+            {/* 3. Nút Thu Gọn / Phóng To Khung Lịch Sử */}
+            <button
+              type="button"
+              data-nodrag="true"
+              onClick={toggleViewMode}
+              title={
+                viewMode === 'FULL'
+                  ? 'Thu gọn khung lịch sử (chỉ giữ thanh nhập)'
+                  : 'Thu nhỏ thành bong bóng mặt cười'
+              }
+              className="w-[34px] h-[28px] bg-[#0a121c]/85 hover:bg-[#122032] border border-[#785a28] flex items-center justify-center text-[#c8aa6e] transition"
+            >
+              {viewMode === 'FULL' ? (
+                <svg viewBox="0 0 24 24" className="w-[15px] h-[15px] fill-current">
+                  <path d="M19 13H5v-2h14v2z" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" className="w-[15px] h-[15px] fill-current">
+                  <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" />
+                </svg>
+              )}
+            </button>
+
+            {/* 4. Nút Xóa Nhanh Lịch Sử Chat */}
+            {viewMode === 'FULL' && (
+              <button
+                type="button"
+                data-nodrag="true"
+                onClick={handleClearChat}
+                title="Xóa sạch lịch sử tin nhắn"
+                className="w-[34px] h-[28px] bg-[#0a121c]/85 hover:bg-[#2a1215] border border-[#785a28] flex items-center justify-center text-[#c8aa6e] hover:text-[#f87171] transition"
+              >
+                <svg viewBox="0 0 24 24" className="w-[14px] h-[14px] fill-current">
+                  <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                </svg>
+              </button>
+            )}
+          </>
+        )}
+
+        {/* Popup Emoji nhỏ gọn */}
+        {showEmoji && viewMode !== 'ICON' && (
           <div
-            onMouseEnter={() => {
-              setIsHoveringWidget(true);
-              setUnreadCount(0);
-            }}
-            onMouseLeave={() => setIsHoveringWidget(false)}
-            style={getSafeExpandedStyle()}
-            className={`draggable-chat-widget absolute z-40 w-[330px] h-[440px] bg-[#0f172a]/95 backdrop-blur-xl border-2 border-indigo-500/60 rounded-2xl shadow-[0_18px_50px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden transition-opacity duration-200 ${
-              ghostMode && !isHoveringWidget && !isInputFocused ? 'opacity-40 hover:opacity-100' : 'opacity-100'
-            }`}
+            data-nodrag="true"
+            className="absolute left-[39px] top-0 w-[184px] bg-[#080e16]/95 border border-[#785a28] p-1.5 grid grid-cols-4 gap-1 shadow-2xl z-50"
           >
+            {EMOJIS.map((em) => (
+              <button
+                key={em}
+                type="button"
+                onClick={() => handleSend(null, em)}
+                className="p-1 text-sm hover:bg-[#785a28]/30 rounded text-center transition"
+              >
+                {em}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* CỘT PHẢI: KHUNG CHAT CHÍNH (Ẩn khi ở chế độ ICON) */}
+      {viewMode !== 'ICON' && (
+        <div style={{ width: `${boxSize.width}px` }} className="relative flex flex-col gap-[5px]">
+          {/* BẢNG CÀI ĐẶT NHANH NỔI NGAY TRONG KHUNG CHAT (Đổi Tên, Đổi Phòng, Xem Bạn Bè) */}
+          {showSettings && (
+            <div
+              data-nodrag="true"
+              className="w-full bg-[#080e16]/95 border border-[#c8aa6e] p-2.5 text-[12px] text-[#f0e6d2] shadow-2xl z-40 space-y-2.5"
+            >
+              <div className="flex items-center justify-between border-b border-[#785a28]/60 pb-1.5">
+                <span className="font-bold text-[#c8aa6e] uppercase tracking-wider text-[11px]">
+                  Thiết Lập Phòng & Nhân Vật
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowSettings(false)}
+                  className="text-[#948875] hover:text-[#f0e6d2] px-1 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveProfileAndRoom} className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] text-[#c8aa6e] mb-0.5">Biệt danh của bạn:</label>
+                  <input
+                    type="text"
+                    value={tempName}
+                    onChange={(e) => setTempName(e.target.value)}
+                    placeholder="Nhập tên..."
+                    className="w-full bg-[#05090e] border border-[#785a28] px-2 py-1 text-[12px] text-[#f0e6d2] focus:outline-none focus:border-[#c8aa6e]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[#c8aa6e] mb-0.5">Mã phòng (Gửi bạn bè):</label>
+                  <div className="flex gap-1">
+                    <input
+                      type="text"
+                      value={tempRoom}
+                      onChange={(e) => setTempRoom(e.target.value.toUpperCase())}
+                      placeholder="VD: TEAM-1"
+                      className="w-full bg-[#05090e] border border-[#785a28] px-2 py-1 text-[12px] text-[#38bdf8] font-bold focus:outline-none focus:border-[#c8aa6e]"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCopyRoom}
+                      title="Copy mã phòng"
+                      className="px-2 bg-[#122032] border border-[#785a28] text-[11px] text-[#c8aa6e] hover:text-white shrink-0"
+                    >
+                      {copiedRoom ? 'Đã chép' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Chọn phòng nhanh 1 chạm */}
+                <div className="col-span-2 flex items-center justify-between pt-0.5">
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="text-[11px] text-[#948875] mr-1">Phòng nhanh:</span>
+                    {QUICK_ROOMS.map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => {
+                          setTempRoom(r);
+                          setRoomId(r);
+                          addSystemMessage(`Đã vào phòng: ${r}`);
+                        }}
+                        className={`px-1.5 py-0.5 text-[10px] border transition ${
+                          roomId === r
+                            ? 'bg-[#785a28]/60 border-[#c8aa6e] text-white font-bold'
+                            : 'bg-[#05090e] border-[#785a28]/60 text-[#c8aa6e] hover:border-[#c8aa6e]'
+                        }`}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="px-3 py-1 bg-[#785a28] hover:bg-[#936f32] border border-[#c8aa6e] text-[#f0e6d2] font-bold text-[11px] transition"
+                  >
+                    Lưu Thiết Lập
+                  </button>
+                </div>
+              </form>
+
+              {/* Danh sách người đang trong phòng */}
+              <div className="border-t border-[#785a28]/50 pt-1.5 flex items-center justify-between text-[11px]">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-[#948875]">Đang trong phòng ({ Math.max(1, onlineUsers.length) }):</span>
+                  {onlineUsers.length === 0 ? (
+                    <span className="text-[#f0e6d2] font-semibold">{nickname} (Bạn)</span>
+                  ) : (
+                    onlineUsers.map((u) => (
+                      <span
+                        key={u.uid}
+                        className="px-1.5 py-0.2 bg-[#122032] border border-[#785a28]/60 text-[#f0e6d2]"
+                      >
+                        {u.name} {user && u.uid === user.uid ? '(Bạn)' : ''}
+                      </span>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* KHUNG HIỂN THỊ TIN NHẮN BÁN TRONG SUỐT */}
+          {viewMode === 'FULL' && (
             <div
               onMouseDown={startDrag}
-              className="px-3.5 py-2.5 bg-gradient-to-r from-slate-900 via-indigo-950/95 to-slate-900 border-b border-slate-700/80 flex items-center justify-between cursor-move select-none shrink-0"
+              onTouchStart={startDrag}
+              style={{ height: `${boxSize.height}px` }}
+              className="relative w-full bg-[#080e16]/75 border border-[#785a28]/90 flex flex-col cursor-move"
             >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="relative">
-                  <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-500 flex items-center justify-center text-white font-bold text-xs shadow-md">
-                    M
-                  </div>
-                  <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 border-2 border-slate-900 rounded-full"></span>
+              {/* THANH MINI-BAR TÍCH HỢP NGAY ĐẦU KHUNG LỊCH SỬ (Bấm đổi tên/phòng trực tiếp) */}
+              <div className="h-[24px] px-2 bg-[#05090e]/70 border-b border-[#785a28]/50 flex items-center justify-between text-[11px] shrink-0">
+                <div className="flex items-center gap-2">
+                  {/* Bấm vào Phòng để copy hoặc mở bảng đổi phòng */}
+                  <button
+                    type="button"
+                    data-nodrag="true"
+                    onClick={() => setShowSettings((prev) => !prev)}
+                    title="Nhấn để đổi mã phòng"
+                    className="flex items-center gap-1 text-[#c8aa6e] hover:text-[#f0e6d2] font-semibold"
+                  >
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    <span>Phòng:</span>
+                    <span className="text-[#38bdf8] font-bold">{roomId}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-nodrag="true"
+                    onClick={handleCopyRoom}
+                    title="Copy mã phòng gửi cho bạn bè"
+                    className="px-1 bg-[#122032] border border-[#785a28]/70 text-[10px] text-[#c8aa6e] hover:text-white"
+                  >
+                    {copiedRoom ? '✓ Đã chép' : 'Copy mã'}
+                  </button>
                 </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-white truncate">{friendName.split(' ')[0]}</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                      #{roomCode}
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-emerald-400 flex items-center gap-1 truncate">
-                    <Move className="w-2.5 h-2.5 text-indigo-300 shrink-0" />
-                    <span>{autoPopupActive ? 'Tin nhắn mới' : 'Kéo thả tự do'}</span>
-                  </div>
-                </div>
-              </div>
 
-              <div onMouseDown={(e) => e.stopPropagation()} className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setIsPinned((p) => !p)}
-                  className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                    isPinned || !autoHideEnabled
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                      : 'hover:bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {isPinned ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSoundEnabled((s) => !s)}
-                  className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-300 transition-colors cursor-pointer"
-                >
-                  {soundEnabled ? <Volume2 className="w-3.5 h-3.5 text-emerald-400" /> : <VolumeX className="w-3.5 h-3.5 text-slate-500" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClearMessages}
-                  className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsHoveringWidget(false);
-                    setAutoPopupActive(false);
-                    setWidgetMode('bar');
-                  }}
-                  className="p-1.5 rounded-lg bg-slate-800/90 hover:bg-indigo-600 text-slate-200 hover:text-white transition-colors cursor-pointer"
-                >
-                  <Minus className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="px-3 py-1.5 bg-slate-900/90 border-b border-slate-800/80 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-1.5 text-slate-400">
-                <Hash className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Mã phòng:</span>
-                <input
-                  type="text"
-                  value={roomInput}
-                  onFocus={() => setIsInputFocused(true)}
-                  onBlur={() => {
-                    setIsInputFocused(false);
-                    if (roomInput.trim()) setRoomCode(roomInput.trim());
-                  }}
-                  onChange={(e) => setRoomInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && roomInput.trim()) setRoomCode(roomInput.trim());
-                  }}
-                  className="w-16 bg-slate-950 border border-slate-700 rounded-md px-1.5 py-0.5 text-indigo-300 font-mono font-bold text-xs focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-              <div className="flex items-center gap-1.5 text-slate-400">
-                <span>Tên bạn:</span>
-                <input
-                  type="text"
-                  value={myName}
-                  onFocus={() => setIsInputFocused(true)}
-                  onBlur={() => setIsInputFocused(false)}
-                  onChange={(e) => setMyName(e.target.value)}
-                  className="w-16 bg-slate-950 border border-slate-700 rounded-md px-1.5 py-0.5 text-slate-200 text-xs focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-            </div>
-
-            {/* DANH SÁCH TIN NHẮN ĐÃ CHẶN SỰ KIỆN CUỘN TRANG */}
-            <div 
-              className="flex-1 overflow-y-auto p-3 space-y-2.5 custom-scrollbar"
-              onWheel={(e) => e.stopPropagation()}
-            >
-              {allMessages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center p-4 text-slate-400">
-                  <MessageSquare className="w-8 h-8 text-indigo-400 mb-2 opacity-80" />
-                  <p className="text-xs font-semibold text-slate-200">Phòng chat trống</p>
-                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                    Nhập tin nhắn bên dưới hoặc bấm nút "Cho Minh nhắn tin tới" phía trên để test!
-                  </p>
-                </div>
-              ) : (
-                allMessages.map((msg) => {
-                  const isMe = msg.senderId === myUid;
-                  const reactions = msg.reactions || {};
-
-                  return (
-                    <div key={msg.id} className={`flex flex-col group ${isMe ? 'items-end' : 'items-start'}`}>
-                      <div className="flex items-center gap-1.5 mb-1 px-1">
-                        <span className="text-[10px] font-medium text-slate-400">{msg.senderName}</span>
-                      </div>
-
-                      <div className={`flex items-center gap-1.5 max-w-[90%] ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
-                        <div
-                          className={`rounded-2xl px-3 py-2 text-xs leading-relaxed shadow-md ${
-                            msg.isCode
-                              ? 'bg-slate-950 border border-slate-700 text-emerald-300 font-mono w-full overflow-x-auto'
-                              : isMe
-                              ? 'bg-gradient-to-br from-indigo-600 to-blue-600 text-white rounded-tr-xs'
-                              : 'bg-slate-800 text-slate-100 border border-slate-700 rounded-tl-xs'
-                          }`}
-                        >
-                          {msg.isCode ? (
-                            <div>
-                              <div className="flex items-center justify-between pb-1 mb-1 border-b border-slate-800 text-[10px] text-slate-400 font-sans">
-                                <span className="text-indigo-400 font-semibold">Code Snippet</span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopy(msg.id, msg.text)}
-                                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer"
-                                >
-                                  {copiedId === msg.id ? 'Đã chép' : 'Copy'}
-                                </button>
-                              </div>
-                              <pre className="text-[11px] leading-4 whitespace-pre overflow-x-auto">{msg.text}</pre>
-                            </div>
-                          ) : (
-                            <p className="whitespace-pre-wrap break-words">{msg.text}</p>
-                          )}
-                        </div>
-
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex bg-slate-800 border border-slate-700 rounded-full px-1.5 py-0.5 shadow">
-                          {REACTION_EMOJIS.map((em) => (
-                            <button
-                              key={em}
-                              type="button"
-                              onClick={() => handleToggleReaction(msg.id, em)}
-                              className="hover:scale-125 transition-transform px-0.5 text-xs cursor-pointer"
-                            >
-                              {em}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {Object.keys(reactions).length > 0 && (
-                        <div className="flex gap-1 mt-1 px-1">
-                          {Object.entries(reactions).map(([em, users]) =>
-                            users && users.length > 0 ? (
-                              <span key={em} className="text-[10px] bg-slate-800 border border-slate-700 rounded-full px-1.5 py-0.5">
-                                {em} {users.length > 1 ? users.length : ''}
-                              </span>
-                            ) : null
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-
-              {friendTyping && (
-                <div className="flex items-center gap-2 text-xs text-emerald-300 bg-emerald-950/60 border border-emerald-500/40 w-fit px-3 py-1 rounded-full animate-pulse">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                  <span>Minh đang gõ tin nhắn...</span>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            <form onSubmit={handleMySubmit} className="p-2.5 bg-slate-900 border-t border-slate-800 relative shrink-0">
-              {showEmojiPicker && (
-                <div className="absolute bottom-full left-2 mb-1.5 p-1.5 bg-slate-800 border border-slate-700 rounded-xl shadow-xl flex flex-wrap gap-1 w-56 z-30">
-                  {QUICK_EMOJIS.map((em) => (
+                {/* Chỉnh nhanh biệt danh ngay trên thanh mini-bar */}
+                <div className="flex items-center gap-2" data-nodrag="true">
+                  {editingInlineName ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (tempName.trim()) setNickname(tempName.trim().slice(0, 22));
+                        setEditingInlineName(false);
+                      }}
+                      className="flex items-center gap-1"
+                    >
+                      <input
+                        type="text"
+                        autoFocus
+                        value={tempName}
+                        onChange={(e) => setTempName(e.target.value)}
+                        onBlur={() => {
+                          if (tempName.trim()) setNickname(tempName.trim().slice(0, 22));
+                          setEditingInlineName(false);
+                        }}
+                        className="w-[105px] bg-[#05090e] border border-[#c8aa6e] px-1 text-[11px] text-[#f0e6d2] focus:outline-none"
+                      />
+                    </form>
+                  ) : (
                     <button
-                      key={em}
                       type="button"
                       onClick={() => {
-                        setInputText((prev) => prev + em);
-                        setShowEmojiPicker(false);
+                        setTempName(nickname);
+                        setEditingInlineName(true);
                       }}
-                      className="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-700 text-base cursor-pointer"
+                      title="Nhấn để sửa nhanh tên của bạn"
+                      className="text-[#948875] hover:text-[#f0e6d2] flex items-center gap-1"
                     >
-                      {em}
+                      <span>Tên:</span>
+                      <span className="text-[#f0e6d2] font-semibold underline decoration-[#785a28]">
+                        {nickname}
+                      </span>
+                      <span className="text-[#c8aa6e] text-[10px]">✎</span>
                     </button>
-                  ))}
+                  )}
                 </div>
-              )}
-
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setShowEmojiPicker((s) => !s)}
-                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
-                >
-                  <Smile className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsCodeMode((s) => !s)}
-                  className={`p-2 rounded-xl border cursor-pointer ${
-                    isCodeMode
-                      ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
-                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
-                  }`}
-                >
-                  <Code className="w-4 h-4" />
-                </button>
-
-                <input
-                  type="text"
-                  value={inputText}
-                  onFocus={() => setIsInputFocused(true)}
-                  onBlur={() => setIsInputFocused(false)}
-                  onChange={(e) => setInputText(e.target.value)}
-                  placeholder={isCodeMode ? 'Dán đoạn code...' : 'Nhập tin nhắn...'}
-                  className="flex-1 min-w-0 bg-slate-950 text-slate-100 text-xs rounded-xl px-3 py-2 border border-slate-700 focus:outline-none focus:border-indigo-500"
-                />
-
-                <button
-                  type="submit"
-                  disabled={!inputText.trim()}
-                  className="p-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-medium flex items-center cursor-pointer shadow-md shadow-indigo-600/20"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                </button>
               </div>
-            </form>
-          </div>
-        )}
 
-        {widgetMode !== 'expanded' && (
-          <div
-            onMouseDown={startDrag}
-            onMouseEnter={() => {
-              if (!isDragging && autoHideEnabled && !isPinned) {
-                setIsHoveringWidget(true);
-                setWidgetMode('expanded');
-                setUnreadCount(0);
-              }
-            }}
-            onClick={() => {
-              if (!hasMovedWhileDraggingRef.current) {
-                setIsHoveringWidget(true);
-                setWidgetMode('expanded');
-                setUnreadCount(0);
-              }
-            }}
-            style={
-              widgetPos.x !== null && widgetPos.y !== null
-                ? { left: `${widgetPos.x}px`, top: `${widgetPos.y}px` }
-                : { right: '20px', bottom: '56px' }
-            }
-            className="draggable-chat-widget absolute z-40 group bg-slate-900/95 hover:bg-indigo-950/95 backdrop-blur-xl border-2 border-indigo-500/70 rounded-2xl px-3.5 py-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.75)] flex items-center gap-2.5 cursor-move select-none transition-transform duration-150 hover:scale-105"
-          >
-            <span className="relative flex h-2.5 w-2.5 shrink-0">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-            </span>
+              {/* DANH SÁCH TIN NHẮN */}
+              <div className="flex-1 px-2.5 py-1.5 overflow-y-auto space-y-1 text-[13px] leading-[1.35] select-text cursor-auto">
+                {allMessages.map((msg) => {
+                  const timeStr = formatTime(msg.timestamp, msg.timeLabel);
 
-            <div className="flex items-center gap-2 max-w-[210px]">
-              <MessageSquare className="w-4 h-4 text-indigo-400 shrink-0" />
-              <span className="text-xs font-semibold text-slate-100 truncate">
-                {lastMessage ? `${lastMessage.senderName.split(' ')[0]}: ${lastMessage.text}` : 'Rê chuột vào để mở Chat'}
-              </span>
+                  if (msg.isSystem || msg.channel === 'BROADCAST') {
+                    return (
+                      <div
+                        key={msg.id}
+                        className="drop-shadow-[0_1px_1px_rgba(0,0,0,0.95)] break-words"
+                      >
+                        <span className="font-bold text-[#f0e6d2] mr-1.5">{timeStr}</span>
+                        <span className="text-[#c8aa6e] font-semibold">
+                          [Phát sóng] {msg.senderName && !msg.isSystem ? `${msg.senderName}: ` : ''}
+                          {msg.text}
+                        </span>
+                      </div>
+                    );
+                  }
+
+                  const isAll = msg.channel === 'ALL';
+                  const tagColor = isAll ? 'text-[#f59e0b]' : 'text-[#38bdf8]';
+                  const tagName = isAll ? '[Tất cả]' : '[Đội]';
+
+                  return (
+                    <div
+                      key={msg.id}
+                      className="drop-shadow-[0_1px_1px_rgba(0,0,0,0.95)] break-words"
+                    >
+                      <span className="font-bold text-[#f0e6d2] mr-1.5">{timeStr}</span>
+                      <span className={`${tagColor} font-semibold mr-1`}>{tagName}</span>
+                      <span className={`${tagColor} font-semibold mr-1.5`}>{msg.senderName}:</span>
+                      <span className="text-[#f0e6d2]">{msg.text}</span>
+                    </div>
+                  );
+                })}
+                <div ref={endRef} />
+              </div>
+
+              {/* Góc kéo thay đổi kích thước khung chat */}
+              <div
+                onMouseDown={startResize}
+                onTouchStart={startResize}
+                data-nodrag="true"
+                title="Kéo để thay đổi kích thước rộng/cao của khung chat"
+                className="absolute bottom-0 right-0 w-3.5 h-3.5 cursor-nwse-resize flex items-end justify-end p-[1px]"
+              >
+                <svg viewBox="0 0 10 10" className="w-2.5 h-2.5 fill-[#c8aa6e]/70">
+                  <path d="M10 0v10H0L10 0z" />
+                </svg>
+              </div>
             </div>
+          )}
 
-            {unreadCount > 0 && (
-              <span className="px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-extrabold animate-bounce">
-                +{unreadCount}
-              </span>
+          {/* THANH NHẬP TIN NHẮN Ở DƯỚI (Đội 💬 | Nhập tin nhắn của bạn... | ➤) */}
+          <form
+            onSubmit={(e) => handleSend(e)}
+            onMouseDown={startDrag}
+            onTouchStart={startDrag}
+            className="relative h-[34px] w-full bg-[#080e16]/85 border border-[#785a28] flex items-center px-2.5 gap-2"
+          >
+            {/* Menu chọn kênh nổi lên khi bấm vào Đội 💬 */}
+            {showChannelMenu && (
+              <div
+                data-nodrag="true"
+                className="absolute left-0 bottom-[36px] bg-[#080e16]/95 border border-[#785a28] py-1 shadow-xl z-50 min-w-[115px]"
+              >
+                {CHANNELS.map((ch, idx) => (
+                  <button
+                    key={ch.id}
+                    type="button"
+                    onClick={() => {
+                      setChannelIdx(idx);
+                      setShowChannelMenu(false);
+                      inputRef.current?.focus();
+                    }}
+                    className={`w-full px-2.5 py-1 text-left text-[12px] font-bold flex items-center justify-between hover:bg-[#785a28]/30 ${
+                      channelIdx === idx ? 'bg-[#785a28]/20' : ''
+                    }`}
+                    style={{ color: ch.color }}
+                  >
+                    <span>{ch.label}</span>
+                    {channelIdx === idx && <span className="text-[10px]">✓</span>}
+                  </button>
+                ))}
+              </div>
             )}
-          </div>
-        )}
+
+            {/* Nút kênh chat: Đội 💬 */}
+            <button
+              type="button"
+              data-nodrag="true"
+              onClick={() => setShowChannelMenu((prev) => !prev)}
+              title="Nhấn để chọn kênh chat (Đội / Tất cả / Phát sóng)"
+              className="flex items-center gap-1.5 pr-1.5 shrink-0 hover:brightness-125"
+            >
+              <span
+                style={{ color: currentChan.color }}
+                className="font-bold text-[13px] tracking-tight"
+              >
+                {currentChan.label}
+              </span>
+              <svg viewBox="0 0 24 24" className="w-[15px] h-[15px] fill-[#d8d0c5]">
+                <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
+              </svg>
+            </button>
+
+            {/* Ô nhập văn bản */}
+            <input
+              ref={inputRef}
+              type="text"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onFocus={() => setShowChannelMenu(false)}
+              placeholder="Nhập tin nhắn của bạn..."
+              className="flex-1 bg-transparent text-[13px] text-[#f0e6d2] placeholder-[#948875] focus:outline-none select-text"
+            />
+
+            {/* Nút mở rộng lại lịch sử nếu đang ở chế độ chỉ hiện thanh nhập (BAR) */}
+            {viewMode === 'BAR' && (
+              <button
+                type="button"
+                data-nodrag="true"
+                onClick={() => setViewMode('FULL')}
+                title="Hiện lại khung lịch sử tin nhắn"
+                className="px-1.5 py-0.5 bg-[#122032] border border-[#785a28] text-[10px] text-[#c8aa6e] hover:text-white shrink-0"
+              >
+                Hiện chat {unreadCount > 0 ? `(${unreadCount})` : ''}
+              </button>
+            )}
+
+            {/* Nút mũi tên gửi màu vàng đồng bên phải */}
+            <button
+              type="submit"
+              data-nodrag="true"
+              title="Gửi tin nhắn"
+              className="p-0.5 text-[#c8aa6e] hover:text-[#f0e6d2] active:scale-95 transition shrink-0"
+            >
+              <svg viewBox="0 0 24 24" className="w-[18px] h-[18px] fill-current">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+              </svg>
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
